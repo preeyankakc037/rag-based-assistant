@@ -1,0 +1,98 @@
+# ==============================
+# Python / FastAPI Backend
+# ==============================
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Python tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+
+# ==============================
+# React / Node Frontend
+# ==============================
+
+# Dependencies
+node_modules/
+
+# Production builds
+dist/
+dist-ssr/
+
+# Vite / local environment files
+*.local
+
+# NPM / Yarn / PNPM logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+
+# ==============================
+# IDE / Editor
+# ==============================
+
+.vscode/*
+!.vscode/extensions.json
+
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.code-workspace
+
+
+# ==============================
+# OS
+# ==============================
+
+.DS_Store
+Thumbs.db
+
+
+# ==============================
+# RAG / Generated Data
+# ==============================
+
+# Local vector stores / indexes
+faiss_index/
+chroma_db/
+vector_store/
+
+# Generated/uploaded files
+uploads/
+
+
+# ==============================
+# Project Documents
+# ==============================
+
+# Do not commit PDFs
+data/*.pdf
+
+# Keep the data directory itself in Git
+!data/.gitkeep
