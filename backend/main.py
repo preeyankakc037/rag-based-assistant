@@ -36,8 +36,11 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 vector_store = None
 rag_chain = None
 
+from typing import List, Dict, Any
+
 class ChatRequest(BaseModel):
     question: str
+    history: List[Dict[str, Any]] = []
 
 @app.get("/health")
 def health_check():
@@ -73,7 +76,7 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=400, detail="No document uploaded yet. Please upload a PDF first.")
     
     try:
-        response = rag_chain.invoke({"input": request.question})
+        response = rag_chain.invoke({"input": request.question, "history": request.history})
         
         answer = response.get("answer", "")
         context = response.get("context", [])

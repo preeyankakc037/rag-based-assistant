@@ -67,7 +67,13 @@ function App() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ question: userMessage.content }),
+        body: JSON.stringify({ 
+          question: userMessage.content,
+          history: messages.map(msg => ({
+            role: msg.role,
+            content: msg.content
+          }))
+        }),
       })
 
       if (!response.ok) {
