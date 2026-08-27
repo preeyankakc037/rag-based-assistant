@@ -1,7 +1,37 @@
 import { useState, useRef, useEffect } from 'react'
+import ReactMarkdown from 'react-markdown'
 import './App.css'
 
 const API_BASE = 'http://127.0.0.1:8000'
+
+function CitationBadges({ sources }) {
+  if (!sources || sources.length === 0) return null
+
+  // De-duplicate: one badge per (filename, page) pair
+  const seen = new Set()
+  const unique = sources.filter(src => {
+    const key = `${src.source}|${src.page}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+
+  const fileName = (fullPath) => {
+    const parts = (fullPath || '').replace(/\\/g, '/').split('/')
+    return parts[parts.length - 1] || fullPath
+  }
+
+  return (
+    <div className="citations">
+      <span className="citations-label">Sources:</span>
+      {unique.map((src, i) => (
+        <span key={i} className="citation-badge" title={src.content}>
+          📄 {fileName(src.source)} · p.{src.page + 1}
+        </span>
+      ))}
+    </div>
+  )
+}
 
 function App() {
   const [file, setFile] = useState(null)
@@ -42,7 +72,7 @@ function App() {
       })
       if (!response.ok) throw new Error('Upload failed')
       setUploadStatus({ type: 'success', message: 'PDF processed! You can now chat.' })
-      setMessages([]) // reset chat on new upload
+      setMessages([])
     } catch {
       setUploadStatus({ type: 'error', message: 'Failed to upload and process PDF.' })
     } finally {
@@ -58,8 +88,11 @@ function App() {
     const userMessage = { role: 'user', content: question }
     const history = messages.map(m => ({ role: m.role, content: m.content }))
 
-    // Add user message and a placeholder bot message immediately
-    setMessages(prev => [...prev, userMessage, { role: 'bot', content: '', sources: [], streaming: true }])
+    setMessages(prev => [
+      ...prev,
+      userMessage,
+      { role: 'bot', content: '', sources: [], streaming: true },
+    ])
     setInputValue('')
     setIsChatting(true)
 
@@ -82,7 +115,7 @@ function App() {
 
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
-        buffer = lines.pop() // keep incomplete last line
+        buffer = lines.pop()
 
         for (const line of lines) {
           if (!line.startsWith('data: ')) continue
@@ -93,7 +126,6 @@ function App() {
             const event = JSON.parse(raw)
 
             if (event.type === 'token') {
-              // Append token to the last (bot) message
               setMessages(prev => {
                 const updated = [...prev]
                 const last = { ...updated[updated.length - 1] }
@@ -102,7 +134,6 @@ function App() {
                 return updated
               })
             } else if (event.type === 'done') {
-              // Attach sources and mark streaming complete
               setMessages(prev => {
                 const updated = [...prev]
                 const last = { ...updated[updated.length - 1] }
@@ -184,18 +215,18 @@ function App() {
             messages.map((msg, idx) => (
               <div key={idx} className={`message ${msg.role}`}>
                 <div className="message-bubble">
-                  {msg.content}
-                  {msg.streaming && <span className="cursor-blink">▍</span>}
+                  {msg.role === 'bot' ? (
+                    <div className="markdown-body">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      {msg.streaming && <span className="cursor-blink">▍</span>}
+                    </div>
+                  ) : (
+                    msg.content
+                  )}
                 </div>
 
-                {msg.role === 'bot' && !msg.streaming && msg.sources && msg.sources.length > 0 && (
-                  <div className="citations">
-                    {msg.sources.map((src, sIdx) => (
-                      <span key={sIdx} className="citation-badge">
-                        📄 Page {src.page + 1}
-                      </span>
-                    ))}
-                  </div>
+                {msg.role === 'bot' && !msg.streaming && (
+                  <CitationBadges sources={msg.sources} />
                 )}
               </div>
             ))
