@@ -35,8 +35,9 @@ CONDENSE_QUESTION_PROMPT = ChatPromptTemplate.from_messages([
         "You are a helpful assistant. Given the conversation history and a follow-up question, "
         "rewrite the follow-up question to be a fully self-contained, standalone question that "
         "can be understood without the conversation history. "
-        "If the question is already standalone, return it unchanged. "
-        "ONLY return the rewritten question, nothing else.",
+        "CRITICAL INSTRUCTION: If the user is just greeting you, thanking you, or asking a general conversational question that does NOT require querying a document (e.g. 'who are you', 'how are you', 'hello', 'what is this'), output exactly `<CONVERSATION>`. "
+        "Otherwise, if the question is already standalone, return it unchanged. "
+        "ONLY return the rewritten question or `<CONVERSATION>`, nothing else.",
     ),
     (
         "human",
@@ -126,6 +127,22 @@ def create_rag_chain(retriever):
 
             # Step 1: rewrite follow-up into standalone question
             standalone = _condense_question(llm, question, history)
+            
+            if standalone.strip() == "<CONVERSATION>":
+                messages = [
+                    SystemMessage(content="You are a friendly, helpful assistant for a university RAG system. Answer conversationally and concisely."),
+                ]
+                for msg in history:
+                    role = "user" if msg.get("role") == "user" else "assistant"
+                    messages.append({"role": role, "content": msg.get("content", "")})
+                messages.append(HumanMessage(content=question))
+                
+                response = llm.invoke(messages)
+                return {
+                    "answer": response.content,
+                    "context": [],
+                    "standalone_question": question,
+                }
 
             # Step 2: retrieve with the standalone question
             docs, context_str = _retrieve_and_format(retriever, standalone)
@@ -172,6 +189,19 @@ def create_streaming_rag_chain(retriever):
 
             # Step 1: condense (non-streaming — fast, single call)
             standalone = _condense_question(condense_llm, question, history)
+
+            if standalone.strip() == "<CONVERSATION>":
+                messages = [
+                    SystemMessage(content="You are a friendly, helpful assistant for a university RAG system. Answer conversationally and concisely."),
+                ]
+                for msg in history:
+                    role = "user" if msg.get("role") == "user" else "assistant"
+                    messages.append({"role": role, "content": msg.get("content", "")})
+                messages.append(HumanMessage(content=question))
+                
+                for chunk in stream_llm.stream(messages):
+                    yield chunk.content, []
+                return
 
             # Step 2: retrieve with standalone question
             docs, context_str = _retrieve_and_format(retriever, standalone)
