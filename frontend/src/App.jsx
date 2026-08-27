@@ -126,7 +126,18 @@ export default function App() {
   }
 
   const handleUpload = async () => {
-    if (!file || !activeId) return
+    if (!file) return
+
+    // Auto-create a session if none exists
+    let sessionId = activeId
+    if (!sessionId) {
+      const id = genId()
+      const newSession = { id, title: 'New Chat', messages: [], documentName: null, createdAt: new Date().toISOString() }
+      setSessions(prev => [newSession, ...prev])
+      setActiveId(id)
+      sessionId = id
+    }
+
     setIsUploading(true)
     setUploadStatus(null)
     const formData = new FormData()
@@ -136,7 +147,7 @@ export default function App() {
       if (!res.ok) throw new Error()
       setLoadedDoc(file.name)
       setUploadStatus({ type: 'success', message: `✓ ${file.name} ready` })
-      updateSession(activeId, s => ({ documentName: file.name }))
+      updateSession(sessionId, s => ({ documentName: file.name }))
     } catch {
       setUploadStatus({ type: 'error', message: 'Upload failed. Try again.' })
     } finally {
@@ -293,7 +304,7 @@ export default function App() {
           <button
             className="btn-upload"
             onClick={handleUpload}
-            disabled={!file || isUploading || !activeId}
+            disabled={!file || isUploading}
           >
             {isUploading ? 'Processing…' : 'Upload & Process'}
           </button>

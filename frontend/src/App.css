@@ -230,9 +230,18 @@ button { cursor: pointer; border: none; }
   cursor: pointer;
   color: var(--sidebar-text-muted);
   font-size: 0.75rem;
+  width: 100%;
 }
 
-.doc-upload-label span { color: var(--sidebar-text); }
+.doc-upload-label span {
+  color: var(--sidebar-text);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  padding: 0 0.25rem;
+}
 .doc-upload-input { display: none; }
 
 .btn-upload {
