@@ -75,15 +75,22 @@ button { cursor: pointer; border: none; }
 }
 
 .brand-icon {
-  width: 28px;
-  height: 28px;
-  background: var(--primary);
-  border-radius: 7px;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background-color: var(--primary);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.9rem;
+  font-size: 0.8rem;
+  overflow: hidden;
   flex-shrink: 0;
+}
+
+.brand-logo {
+  height: 100%;
+  width: auto;
+  object-fit: contain;
 }
 
 .btn-new-chat {

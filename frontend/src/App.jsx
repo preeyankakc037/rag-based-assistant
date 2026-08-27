@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import './App.css'
+import logoSrc from './assets/logo.png'
 
 const API_BASE = 'http://127.0.0.1:8000'
 
@@ -123,6 +124,7 @@ export default function App() {
     setActiveId(id)
     setInputValue('')
     setUploadStatus(null)
+    setFile(null)
   }
 
   const deleteSession = (e, id) => {
@@ -270,7 +272,9 @@ export default function App() {
 
         {/* Brand */}
         <div className="sidebar-brand">
-          <div className="brand-icon">🤖</div>
+          <div className="brand-icon">
+            <img src={logoSrc} alt="Logo" className="brand-logo" />
+          </div>
           RAG Assistant
         </div>
 

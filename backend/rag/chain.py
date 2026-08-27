@@ -3,6 +3,31 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 
 
+# ── Conversational detection ────────────────────────────────────────────────
+_GREETINGS = {
+    'hey', 'hi', 'hello', 'hiya', 'sup', 'what\'s up', 'whats up',
+    'thanks', 'thank you', 'ty', 'thx', 'cheers',
+    'ok', 'okay', 'got it', 'sure', 'alright', 'cool', 'great', 'nice',
+    'bye', 'goodbye', 'see you', 'later',
+    'good morning', 'good afternoon', 'good evening',
+}
+
+def _is_conversational(question: str) -> bool:
+    """Return True if the question is a casual greeting that doesn't need retrieval."""
+    q = question.strip().lower().rstrip('!.,?')
+    # Exact match on common greetings
+    if q in _GREETINGS:
+        return True
+    # Very short with no document-query words
+    doc_words = {'what', 'how', 'why', 'when', 'where', 'who', 'which',
+                 'tell', 'explain', 'describe', 'list', 'summarize', 'find',
+                 'show', 'give', 'define', 'compare', 'difference', 'example'}
+    words = set(q.split())
+    if len(q) < 25 and not (words & doc_words) and '?' not in question:
+        return True
+    return False
+
+
 # ── Prompt: rewrite a follow-up question into a standalone one ──────────────
 CONDENSE_QUESTION_PROMPT = ChatPromptTemplate.from_messages([
     (
@@ -82,6 +107,23 @@ def create_rag_chain(retriever):
             question = query_dict["input"]
             history = query_dict.get("history", [])
 
+            if _is_conversational(question):
+                messages = [
+                    SystemMessage(content="You are a friendly, helpful assistant for a university RAG system. Answer conversationally and concisely."),
+                ]
+                # Add history if we want
+                for msg in history:
+                    role = "user" if msg.get("role") == "user" else "assistant"
+                    messages.append({"role": role, "content": msg.get("content", "")})
+                messages.append(HumanMessage(content=question))
+                
+                response = llm.invoke(messages)
+                return {
+                    "answer": response.content,
+                    "context": [],
+                    "standalone_question": question,
+                }
+
             # Step 1: rewrite follow-up into standalone question
             standalone = _condense_question(llm, question, history)
 
@@ -114,6 +156,19 @@ def create_streaming_rag_chain(retriever):
         def stream(self, query_dict: dict):
             question = query_dict["input"]
             history = query_dict.get("history", [])
+
+            if _is_conversational(question):
+                messages = [
+                    SystemMessage(content="You are a friendly, helpful assistant for a university RAG system. Answer conversationally and concisely."),
+                ]
+                for msg in history:
+                    role = "user" if msg.get("role") == "user" else "assistant"
+                    messages.append({"role": role, "content": msg.get("content", "")})
+                messages.append(HumanMessage(content=question))
+                
+                for chunk in stream_llm.stream(messages):
+                    yield chunk.content, []
+                return
 
             # Step 1: condense (non-streaming — fast, single call)
             standalone = _condense_question(condense_llm, question, history)
