@@ -4,7 +4,7 @@ A Retrieval-Augmented Generation (RAG) chatbot that allows users to upload their
 
 Built with **React** for the frontend and **FastAPI** for the backend, using **LangChain, Google Gemini, and FAISS** for the RAG pipeline.
 
-![alt text](image.png)
+![alt text](frontend/src/assets/image.png)
 
 ## Features
 
