@@ -2,7 +2,7 @@ import json
 import os
 import shutil
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,10 +35,10 @@ app.add_middleware(
 UPLOAD_DIR = Path(__file__).parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-# Global RAG state (in-memory, reset on new upload)
-vector_store = None
-rag_chain = None
-streaming_rag_chain = None
+# ── Multi-document store ──────────────────────────────────────────────────────
+# Maps filename → (rag_chain, streaming_rag_chain)
+document_stores: Dict[str, tuple] = {}
+active_document: Optional[str] = None
 
 
 class ChatRequest(BaseModel):
@@ -46,14 +46,26 @@ class ChatRequest(BaseModel):
     history: List[Dict[str, Any]] = []
 
 
+class ActivateRequest(BaseModel):
+    document_name: str
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
+
 @app.get("/health")
 def health_check():
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "loaded_documents": list(document_stores.keys()),
+        "active_document": active_document,
+    }
 
+
+# ── Upload ────────────────────────────────────────────────────────────────────
 
 @app.post("/upload")
 async def upload_document(file: UploadFile = File(...)):
-    global vector_store, rag_chain, streaming_rag_chain
+    global active_document
 
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
@@ -68,57 +80,85 @@ async def upload_document(file: UploadFile = File(...)):
         embeddings = get_embeddings()
         vector_store = create_vector_store(chunks, embeddings)
         retriever = get_retriever(vector_store)
-        rag_chain = create_rag_chain(retriever)
-        streaming_rag_chain = create_streaming_rag_chain(retriever)
 
-        return {"message": f"Successfully processed {file.filename}. Ready for chat."}
+        # Cache both chain types under this filename
+        document_stores[file.filename] = (
+            create_rag_chain(retriever),
+            create_streaming_rag_chain(retriever),
+        )
+        active_document = file.filename
+
+        return {
+            "message": f"Successfully processed {file.filename}. Ready for chat.",
+            "document_name": file.filename,
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+# ── Activate (switch active document without re-uploading) ───────────────────
+
+@app.post("/activate")
+async def activate_document(req: ActivateRequest):
+    global active_document
+
+    if req.document_name not in document_stores:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Document '{req.document_name}' is not loaded. Please re-upload it.",
+        )
+
+    active_document = req.document_name
+    return {"message": f"Activated '{req.document_name}'.", "document_name": req.document_name}
+
+
+@app.get("/loaded-documents")
+def list_loaded_documents():
+    return {"documents": list(document_stores.keys()), "active": active_document}
+
+
+# ── Chat (non-streaming) ──────────────────────────────────────────────────────
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    """Non-streaming endpoint — returns a single JSON response."""
-    if rag_chain is None:
-        raise HTTPException(status_code=400, detail="No document uploaded yet. Please upload a PDF first.")
+    if active_document is None or active_document not in document_stores:
+        raise HTTPException(status_code=400, detail="No document is active. Please upload a PDF first.")
+
+    rag_chain, _ = document_stores[active_document]
 
     try:
         response = rag_chain.invoke({"input": request.question, "history": request.history})
-
-        answer = response.get("answer", "")
         context = response.get("context", [])
-
-        sources = []
-        for doc in context:
-            source = doc.metadata.get("source", "Unknown")
-            page = doc.metadata.get("page", -1)
-            sources.append({"source": source, "page": page, "content": doc.page_content[:200]})
-
-        return {"answer": answer, "sources": sources}
+        sources = [
+            {
+                "source": doc.metadata.get("source", "Unknown"),
+                "page": doc.metadata.get("page", -1),
+                "content": doc.page_content[:200],
+            }
+            for doc in context
+        ]
+        return {"answer": response.get("answer", ""), "sources": sources}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Chat (streaming) ──────────────────────────────────────────────────────────
+
 @app.post("/chat/stream")
 async def chat_stream(request: ChatRequest):
-    """Streaming endpoint — uses Server-Sent Events (SSE) to stream tokens."""
-    if streaming_rag_chain is None:
-        raise HTTPException(status_code=400, detail="No document uploaded yet. Please upload a PDF first.")
+    if active_document is None or active_document not in document_stores:
+        raise HTTPException(status_code=400, detail="No document is active. Please upload a PDF first.")
+
+    _, streaming_chain = document_stores[active_document]
 
     def event_generator():
         docs = None
-        full_text = ""
-
-        for token, retrieved_docs in streaming_rag_chain.stream(
+        for token, retrieved_docs in streaming_chain.stream(
             {"input": request.question, "history": request.history}
         ):
-            docs = retrieved_docs  # keep updating; last one is the real set
-            full_text += token
-            # Send each token as an SSE "token" event
-            payload = json.dumps({"type": "token", "content": token})
-            yield f"data: {payload}\n\n"
+            docs = retrieved_docs
+            yield f"data: {json.dumps({'type': 'token', 'content': token})}\n\n"
 
-        # After streaming is done, send the citations as a final event
         sources = []
         if docs:
             for doc in docs:
@@ -127,15 +167,10 @@ async def chat_stream(request: ChatRequest):
                     "page": doc.metadata.get("page", -1),
                     "content": doc.page_content[:200],
                 })
-
-        done_payload = json.dumps({"type": "done", "sources": sources})
-        yield f"data: {done_payload}\n\n"
+        yield f"data: {json.dumps({'type': 'done', 'sources': sources})}\n\n"
 
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

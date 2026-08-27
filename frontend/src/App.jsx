@@ -97,6 +97,25 @@ export default function App() {
 
   const activeSession = sessions.find(s => s.id === activeId) || null
 
+  // Activate a session's document on the backend (no re-upload needed)
+  const activateDocument = async (docName) => {
+    if (!docName) return false
+    try {
+      const res = await fetch(`${API_BASE}/activate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ document_name: docName }),
+      })
+      if (res.ok) {
+        setLoadedDoc(docName)
+        return true
+      }
+      return false
+    } catch {
+      return false
+    }
+  }
+
   const createNewChat = () => {
     const id = genId()
     const newSession = { id, title: 'New Chat', messages: [], documentName: null, createdAt: new Date().toISOString() }
@@ -112,6 +131,16 @@ export default function App() {
     if (activeId === id) {
       const remaining = sessions.filter(s => s.id !== id)
       setActiveId(remaining.length > 0 ? remaining[0].id : null)
+    }
+  }
+
+  const switchSession = async (id) => {
+    setActiveId(id)
+    setUploadStatus(null)
+    setInputValue('')
+    const session = sessions.find(s => s.id === id)
+    if (session?.documentName) {
+      await activateDocument(session.documentName)
     }
   }
 
@@ -269,7 +298,7 @@ export default function App() {
               <div
                 key={session.id}
                 className={`session-item ${session.id === activeId ? 'active' : ''}`}
-                onClick={() => { setActiveId(session.id); setUploadStatus(null) }}
+                onClick={() => switchSession(session.id)}
               >
                 <div className="session-info">
                   <div className="session-title">{session.title}</div>
@@ -365,9 +394,10 @@ export default function App() {
 
         {/* Input */}
         <div className="chat-input-wrapper">
-          {activeSession && docNeeded && activeSession.messages.length > 0 && (
+          {/* Doc needed: only show if session has a doc but it's not loaded in backend */}
+          {activeSession && activeSession.documentName && activeSession.documentName !== loadedDoc && activeSession.messages.length > 0 && (
             <div className="doc-needed-banner">
-              ⚠️ Upload a document in the sidebar to continue chatting.
+              ⚠️ <strong>{activeSession.documentName}</strong> needs to be re-uploaded (backend was restarted).
             </div>
           )}
           <form className="chat-form" onSubmit={handleSend}>
