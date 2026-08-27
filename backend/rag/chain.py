@@ -1,74 +1,133 @@
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, SystemMessage
 
 
-def _build_prompt_and_docs(retriever, query_dict):
-    """Shared helper that retrieves docs and formats the messages."""
-    query = query_dict["input"]
-    history = query_dict.get("history", [])
+# ── Prompt: rewrite a follow-up question into a standalone one ──────────────
+CONDENSE_QUESTION_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a helpful assistant. Given the conversation history and a follow-up question, "
+        "rewrite the follow-up question to be a fully self-contained, standalone question that "
+        "can be understood without the conversation history. "
+        "If the question is already standalone, return it unchanged. "
+        "ONLY return the rewritten question, nothing else.",
+    ),
+    (
+        "human",
+        "Conversation history:\n{history}\n\nFollow-up question: {question}\n\nStandalone question:",
+    ),
+])
 
-    # Format conversation history for the system prompt
-    history_str = ""
+# ── Prompt: answer using retrieved context + full history ───────────────────
+ANSWER_PROMPT = ChatPromptTemplate.from_messages([
+    (
+        "system",
+        "You are a helpful assistant that answers questions based on provided document context. "
+        "Use the retrieved context below to answer the user's question. "
+        "If the answer is not in the context, say you don't know. "
+        "Format your answer clearly using markdown where helpful.\n\n"
+        "Context:\n{context}\n\n"
+        "Conversation so far:\n{history}",
+    ),
+    ("human", "{question}"),
+])
+
+
+def _format_history(history: list) -> str:
+    """Convert list of {role, content} dicts into a readable string."""
+    if not history:
+        return "(none)"
+    lines = []
     for msg in history:
         role = "User" if msg.get("role") == "user" else "Assistant"
-        history_str += f"{role}: {msg.get('content', '')}\n"
+        lines.append(f"{role}: {msg.get('content', '')}")
+    return "\n".join(lines)
 
-    # Retrieve relevant document chunks
+
+def _condense_question(llm, question: str, history: list) -> str:
+    """
+    If there's no history, return the question unchanged.
+    Otherwise ask the LLM to rewrite it as a standalone question.
+    """
+    if not history:
+        return question
+
+    messages = CONDENSE_QUESTION_PROMPT.format_messages(
+        history=_format_history(history),
+        question=question,
+    )
+    response = llm.invoke(messages)
+    condensed = response.content.strip()
+    return condensed if condensed else question
+
+
+def _retrieve_and_format(retriever, standalone_question: str):
+    """Retrieve relevant document chunks for the standalone question."""
     if hasattr(retriever, "invoke"):
-        docs = retriever.invoke(query)
+        docs = retriever.invoke(standalone_question)
     else:
-        docs = retriever.get_relevant_documents(query)
+        docs = retriever.get_relevant_documents(standalone_question)
 
     context_str = "\n\n".join(doc.page_content for doc in docs)
-
-    system_prompt = (
-        "You are an assistant for question-answering tasks. "
-        "Use the following pieces of retrieved context to answer the question. "
-        "If you don't know the answer, say that you don't know. "
-        "Keep the answer concise and helpful.\n\n"
-        "Chat History:\n{history_str}\n\n"
-        "Context:\n{context}"
-    )
-
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ])
-
-    messages = prompt.format_messages(
-        context=context_str,
-        history_str=history_str,
-        input=query,
-    )
-
-    return messages, docs
+    return docs, context_str
 
 
 def create_rag_chain(retriever):
-    """Returns an object with .invoke() for a one-shot answer."""
+    """Non-streaming chain: condense → retrieve → answer."""
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 
-    class CustomRagChain:
-        def invoke(self, query_dict):
-            messages, docs = _build_prompt_and_docs(retriever, query_dict)
+    class ConversationalRagChain:
+        def invoke(self, query_dict: dict) -> dict:
+            question = query_dict["input"]
+            history = query_dict.get("history", [])
+
+            # Step 1: rewrite follow-up into standalone question
+            standalone = _condense_question(llm, question, history)
+
+            # Step 2: retrieve with the standalone question
+            docs, context_str = _retrieve_and_format(retriever, standalone)
+
+            # Step 3: generate answer with full history + context
+            messages = ANSWER_PROMPT.format_messages(
+                context=context_str,
+                history=_format_history(history),
+                question=question,
+            )
             response = llm.invoke(messages)
+
             return {
                 "answer": response.content,
                 "context": docs,
+                "standalone_question": standalone,
             }
 
-    return CustomRagChain()
+    return ConversationalRagChain()
 
 
 def create_streaming_rag_chain(retriever):
-    """Returns an object with .stream() that yields text tokens."""
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", streaming=True)
+    """Streaming chain: condense → retrieve → stream answer tokens."""
+    condense_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+    stream_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", streaming=True)
 
-    class StreamingRagChain:
-        def stream(self, query_dict):
-            messages, docs = _build_prompt_and_docs(retriever, query_dict)
-            # Yield each token chunk as it arrives
-            for chunk in llm.stream(messages):
+    class StreamingConversationalRagChain:
+        def stream(self, query_dict: dict):
+            question = query_dict["input"]
+            history = query_dict.get("history", [])
+
+            # Step 1: condense (non-streaming — fast, single call)
+            standalone = _condense_question(condense_llm, question, history)
+
+            # Step 2: retrieve with standalone question
+            docs, context_str = _retrieve_and_format(retriever, standalone)
+
+            # Step 3: stream answer tokens
+            messages = ANSWER_PROMPT.format_messages(
+                context=context_str,
+                history=_format_history(history),
+                question=question,
+            )
+            for chunk in stream_llm.stream(messages):
                 yield chunk.content, docs
 
-    return StreamingRagChain()
+    return StreamingConversationalRagChain()
